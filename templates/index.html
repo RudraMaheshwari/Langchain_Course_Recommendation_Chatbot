@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Course Recommendation Chatbot</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+    <style>
+        /* Add minimal styling for structured display */
+        .course-block {
+            border: 1px solid #ccc;
+            background: #f9f9f9;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 6px;
+        }
+        .course-title {
+            font-weight: bold;
+            font-size: 1.1em;
+            color: #2c3e50;
+            margin-bottom: 6px;
+        }
+        .course-section {
+            margin-bottom: 6px;
+        }
+        .course-section strong {
+            color: #34495e;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎓 Course Chatbot</h1>
+
+        <!-- Grade Setup Form -->
+        <form id="setup-form">
+            <label for="grade">Enter your grade (8-12):</label>
+            <input type="number" name="grade" id="grade" min="8" max="12" required aria-label="Enter your grade" />
+            <button type="submit">Start</button>
+        </form>
+
+        <!-- Chat Section -->
+        <div id="chat-section" style="display:none;">
+            <div id="chat-box" class="chat-box"></div>
+            <div class="input-group">
+                <input
+                    type="text"
+                    id="user-input"
+                    placeholder="Tell me your interests or ask a question..."
+                    aria-label="Type your message here"
+                />
+                <button type="button" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const setupForm = document.getElementById("setup-form");
+        const chatSection = document.getElementById("chat-section");
+        const chatBox = document.getElementById("chat-box");
+        const userInput = document.getElementById("user-input");
+
+        setupForm.onsubmit = async function (e) {
+            e.preventDefault();
+            const gradeInput = document.getElementById("grade");
+            const grade = gradeInput.value;
+
+            try {
+                const res = await fetch("/set_grade", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ grade: grade }),
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(data.message);
+                    setupForm.style.display = "none";
+                    chatSection.style.display = "block";
+                    chatBox.innerHTML = "";
+                } else {
+                    const data = await res.json();
+                    alert(data.error || "Failed to set grade");
+                }
+            } catch (error) {
+                console.error("Error setting grade:", error);
+                alert("An error occurred while setting the grade. Please try again.");
+            }
+        };
+
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
+
+            appendMessage(`👤 ${message}`, "user");
+            userInput.value = "";
+
+            try {
+                const response = await fetch("/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message: message }),
+                });
+
+                if (!response.ok) {
+                    throw new Error("Network response was not ok");
+                }
+
+                const data = await response.json();
+                appendBotMessage(data.response);
+            } catch (error) {
+                console.error("Error sending message:", error);
+                appendMessage("🤖 Sorry, I encountered an error. Please try again later.", "bot");
+            }
+        }
+
+        function appendMessage(message, sender) {
+            const div = document.createElement("div");
+            div.className = `message ${sender}`;
+            div.textContent = message;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // Parse structured LLM output for course recommendations and render nicely
+        function appendBotMessage(message) {
+            // Try to parse structured courses from the bot response
+            const courses = parseCourses(message);
+            if (courses.length > 0) {
+                courses.forEach((course) => {
+                    const courseDiv = document.createElement("div");
+                    courseDiv.className = "message bot course-block";
+
+                    courseDiv.innerHTML = `
+                        <div class="course-title">${escapeHtml(course.title)}</div>
+                        <div class="course-section"><strong>Brief Description:</strong> ${escapeHtml(course.description)}</div>
+                        <div class="course-section"><strong>Why it fits:</strong> ${escapeHtml(course.why)}</div>
+                        <div class="course-section"><strong>Subjects/Topics Covered:</strong> ${escapeHtml(course.topics)}</div>
+                    `;
+
+                    chatBox.appendChild(courseDiv);
+                });
+            } else {
+                // Fallback: Just append as plain text
+                appendMessage(`🤖 ${message}`, "bot");
+            }
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // Parse courses structured in text, return array of objects or empty if none
+        // Assumes each course block starts with "Course Title:" and has other labeled fields
+        function parseCourses(text) {
+            const courseBlocks = text.split(/\n\s*\n/); // Split by empty lines between courses
+            const courses = [];
+
+            courseBlocks.forEach((block) => {
+                const titleMatch = block.match(/Course Title:\s*(.*)/i);
+                const descMatch = block.match(/Brief Description:\s*([\s\S]*?)\n(?:Why it fits:|$)/i);
+                const whyMatch = block.match(/Why it fits:\s*([\s\S]*?)\n(?:Subjects\/Topics Covered:|$)/i);
+                const topicsMatch = block.match(/Subjects\/Topics Covered:\s*([\s\S]*)/i);
+
+                if (titleMatch && descMatch && whyMatch && topicsMatch) {
+                    courses.push({
+                        title: titleMatch[1].trim(),
+                        description: descMatch[1].trim(),
+                        why: whyMatch[1].trim(),
+                        topics: topicsMatch[1].trim(),
+                    });
+                }
+            });
+
+            return courses;
+        }
+
+        // Simple helper to escape HTML for safety
+        function escapeHtml(text) {
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // Allow sending message with Enter key
+        userInput.addEventListener("keypress", function (event) {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
